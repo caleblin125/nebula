@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#04060c" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Seeded procedural nebula generator: multi-scale density, GLSL filaments and a raymarched volume, rendered in real time with WebGL2."
+    />
+    <meta name="author" content="Caleb Lin" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Nebula — procedural density field" />
+    <meta
+      property="og:description"
+      content="A seeded procedural nebula generator built on WebGL2, TypeScript and raw GLSL."
+    />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/caleblin125/nebula/main/screenshots/orion-deep.jpg"
+    />
+    <meta property="og:image:alt" content="Orion Deep nebula preset" />
+    <meta name="twitter:card" content="summary_large_image" />
     <title>Nebula — procedural density field</title>
   </head>
   <body>
@@ -29,6 +48,12 @@
       <section id="controls" class="controls" aria-label="Nebula controls"></section>
 
       <div id="notice" class="notice" hidden></div>
+
+      <noscript>
+        <div class="notice">
+          <p>Nebula needs JavaScript enabled and a WebGL2 browser.</p>
+        </div>
+      </noscript>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

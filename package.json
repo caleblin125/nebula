@@ -2,13 +2,37 @@
   "name": "nebula",
   "private": true,
   "version": "0.1.0",
-  "description": "Procedural nebula renderer using WebGL2 and GLSL",
+  "description": "Seeded procedural nebula generator rendered with WebGL2 and GLSL ES 3.00.",
+  "keywords": [
+    "webgl2",
+    "glsl",
+    "shaders",
+    "procedural-generation",
+    "nebula",
+    "raymarching",
+    "typescript",
+    "vite"
+  ],
+  "author": "Caleb Lin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caleblin125/nebula.git"
+  },
+  "homepage": "https://github.com/caleblin125/nebula#readme",
+  "bugs": {
+    "url": "https://github.com/caleblin125/nebula/issues"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench": "vite --open /bench.html"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
