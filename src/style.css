@@ -710,3 +710,12 @@ details[open] summary {
     max-height: 54%;
   }
 }
+
+/* Clean capture / embedding mode (?ui=0). */
+.hide-ui .masthead,
+.hide-ui .telemetry,
+.hide-ui .controls,
+.hide-ui .toast {
+  display: none;
+}
+

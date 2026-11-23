@@ -107,7 +107,11 @@ function updateStats(stats: RendererStats, compileMs: number): void {
 }
 
 function syncUrl(parameters: NebulaParameters): void {
-  const query = new URLSearchParams();
+  // Keep development-only query flags (debug views) intact.
+  const query = new URLSearchParams(window.location.search);
+  query.delete('seed');
+  query.delete('preset');
+  query.delete('mode');
   query.set('seed', String(parameters.seed));
   const preset = detectPreset(parameters);
   if (preset !== 'custom') query.set('preset', preset);
@@ -118,6 +122,11 @@ function syncUrl(parameters: NebulaParameters): void {
 
 function main(): void {
   const parameters = initialParameters();
+
+  // Clean capture mode for screenshots and embedding (?ui=0).
+  if (new URLSearchParams(window.location.search).get('ui') === '0') {
+    document.documentElement.classList.add('hide-ui');
+  }
   let renderer: Renderer;
 
   try {
@@ -151,6 +160,18 @@ function main(): void {
     '--accent-soft',
     PALETTES[parameters.palette].accent + '38',
   );
+
+  const debugParam = new URLSearchParams(window.location.search).get('debug');
+  if (debugParam) {
+    const views: Record<string, number> = {
+      density: 1,
+      cloud: 2,
+      filament: 3,
+      shape: 4,
+      mask: 5,
+    };
+    renderer.setDebugView(views[debugParam] ?? 0);
+  }
 
   let urlTimer = 0;
   let controls: Controls | undefined;

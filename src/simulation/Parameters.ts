@@ -24,37 +24,37 @@ export interface PaletteDefinition {
 export const PALETTES: Record<PaletteId, PaletteDefinition> = {
   orion: {
     label: 'Orion',
-    stops: ['#12325e', '#1f6ea8', '#54c3d4', '#9a73e8', '#ffd2e0'],
+    stops: ['#071528', '#0d4f8e', '#1aa8cc', '#8a46d8', '#ff9ecb'],
     background: '#04070f',
     accent: '#7cc7ff',
   },
   carina: {
     label: 'Carina',
-    stops: ['#3a1220', '#7d2238', '#b9415c', '#f08a63', '#ffe3c4'],
+    stops: ['#2e0d18', '#6b1c30', '#b33a4f', '#e8875a', '#ffd2a8'],
     background: '#0a0406',
     accent: '#ff9a8a',
   },
   veil: {
     label: 'Veil',
-    stops: ['#0c2c33', '#155b60', '#3aa89b', '#9fdcb7', '#f2ffe9'],
+    stops: ['#08201f', '#0f4a48', '#2b8f7c', '#77c79c', '#dff7d8'],
     background: '#03090a',
     accent: '#6fe3c4',
   },
   ember: {
     label: 'Ember',
-    stops: ['#2a0d0a', '#6b2318', '#bd5228', '#e9a25e', '#fff0d2'],
+    stops: ['#220a08', '#571b13', '#a63f21', '#dd8a44', '#ffc989'],
     background: '#070403',
     accent: '#ffb070',
   },
   violet: {
     label: 'Violet',
-    stops: ['#1b1040', '#402380', '#7048c8', '#bb78e2', '#ffd9f5'],
+    stops: ['#150c33', '#341c6b', '#6034ac', '#a45cc8', '#f0a8de'],
     background: '#060410',
     accent: '#c79bff',
   },
   ice: {
     label: 'Ice',
-    stops: ['#16304a', '#285f83', '#4f9fc4', '#a7d7ea', '#ffffff'],
+    stops: ['#0e2236', '#1e4b6b', '#3d7fa3', '#87bcd3', '#e6f5ff'],
     background: '#02070d',
     accent: '#a9dcff',
   },
@@ -91,7 +91,7 @@ export interface NebulaParameters {
 }
 
 export const DEFAULT_PARAMETERS: NebulaParameters = {
-  seed: 7341,
+  seed: 65521,
   density: 1.0,
   scale: 1.45,
   warp: 0.85,
@@ -100,11 +100,11 @@ export const DEFAULT_PARAMETERS: NebulaParameters = {
   lacunarity: 2.02,
   persistence: 0.5,
   rotation: 0,
-  emission: 1.1,
-  exposure: 1.0,
+  emission: 1.4,
+  exposure: 1.1,
   palette: 'orion',
   starDensity: 0.42,
-  vignette: 0.5,
+  vignette: 0.45,
   animationSpeed: 0.35,
   paused: false,
   mode: '2d',

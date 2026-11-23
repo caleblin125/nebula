@@ -16,6 +16,7 @@ import starsSource from '../shaders/stars.glsl?raw';
 import { FullscreenTriangle } from './FullscreenTriangle';
 import { ShaderProgram, type CompileReport, type ShaderSources } from './ShaderProgram';
 import { PerformanceMonitor, type FrameStats } from './PerformanceMonitor';
+import { PostFx } from './PostFx';
 import {
   PALETTES,
   type NebulaParameters,
@@ -82,11 +83,18 @@ function buildPalette(id: PaletteId): PaletteUniforms {
 export function estimateNoisePerPixel(parameters: NebulaParameters, mode: RenderMode): number {
   const octaves = Math.max(3, Math.min(9, parameters.octaves));
   if (mode === 'volume') {
-    const sampleCost = 6 + octaves + Math.min(octaves, 4) + 2;
-    const effectiveSteps = parameters.volumeSteps * 0.7;
+    // Warp (1) + base (≤5) + medium (≤3) + conditional ridge (2, ~half).
+    const sampleCost = 1 + Math.min(octaves, 5) + Math.min(octaves, 3) + 1;
+    // Empty-space stepping means many rays take fewer than uStepCount samples.
+    const effectiveSteps = parameters.volumeSteps * 0.55;
     return Math.round(sampleCost * effectiveSteps);
   }
-  return 20 + Math.min(octaves, 6) + octaves;
+  // Warp (10 octaves) + large (≤5), medium, fine, micro, detail, grain, mask,
+  // envelope, clumps, erosion, ridge, second ridge, lace.
+  const warp = 10;
+  const fields =
+    5 + octaves + 3 + 2 + 2 + 2 + 3 + 3 + 3 + 2 + 4 + 3 + 2;
+  return warp + fields;
 }
 
 export class Renderer {
@@ -97,6 +105,7 @@ export class Renderer {
   private triangle: FullscreenTriangle | null = null;
   private nebulaProgram: ShaderProgram | null = null;
   private volumeProgram: ShaderProgram | null = null;
+  private post: PostFx | null = null;
   private monitor: PerformanceMonitor;
 
   private parameters: NebulaParameters;
@@ -120,6 +129,7 @@ export class Renderer {
   private lastStatsAt = 0;
   private compileReports: CompileReport[] = [];
   private volumeError: string | null = null;
+  private debugView = 0;
 
   private resizeObserver: ResizeObserver | null = null;
   private readonly handleContextLost: (event: Event) => void;
@@ -180,10 +190,16 @@ export class Renderer {
   setParameters(next: NebulaParameters): void {
     const modeChanged = next.mode !== this.parameters.mode;
     const scaleChanged = next.renderScale !== this.parameters.renderScale;
+    const costChanged =
+      next.octaves !== this.parameters.octaves ||
+      next.volumeSteps !== this.parameters.volumeSteps ||
+      next.adaptiveQuality !== this.parameters.adaptiveQuality;
     this.parameters = next;
     this.dirty = true;
 
-    if (modeChanged || scaleChanged) {
+    if (modeChanged || scaleChanged || costChanged) {
+      // A new look or quality budget starts from full resolution and adapts
+      // down again if it cannot hold the frame budget.
       this.adaptiveScale = 1;
       this.adaptiveCooldown = 24;
       this.resize();
@@ -215,6 +231,24 @@ export class Renderer {
 
   /** Redraw even if the field is paused or static. */
   requestRender(): void {
+    this.dirty = true;
+  }
+
+  /**
+   * Profiling hook: draw exactly one frame synchronously, outside the rAF
+   * cadence. The benchmark harness uses it to measure draw cost without a
+   * display-refresh cap.
+   */
+  renderOnce(): void {
+    if (this.contextLost || this.disposed) return;
+    this.dirty = false;
+    this.draw();
+    this.monitor.markFrameRendered();
+  }
+
+  /** Development aid: 1 density, 2 cloud, 3 filaments, 4 shape, 5 mask. */
+  setDebugView(view: number): void {
+    this.debugView = Math.max(0, Math.round(view));
     this.dirty = true;
   }
 
@@ -261,6 +295,15 @@ export class Renderer {
     }
 
     this.triangle = new FullscreenTriangle(this.gl);
+
+    try {
+      this.post = new PostFx(this.gl, this.triangle);
+      this.compileReports.push(this.post.compileReport);
+    } catch (error) {
+      this.post = null;
+      console.warn('[nebula] bloom unavailable', error);
+    }
+
     this.observeResize();
     this.monitor.reset();
     this.lastStatsAt = 0;
@@ -274,11 +317,12 @@ export class Renderer {
   }
 
   private rebuildGL(): void {
-    this.monitor.timer.dispose();
+    // The old context is gone; every handle is invalid, so drop references
+    // without issuing GL calls against them.
+    this.monitor.timer.abandon();
     this.monitor = new PerformanceMonitor(this.gl);
-    this.triangle?.dispose();
-    this.nebulaProgram?.dispose();
-    this.volumeProgram?.dispose();
+    this.post?.abandon();
+    this.post = null;
     this.nebulaProgram = null;
     this.volumeProgram = null;
     this.triangle = null;
@@ -289,9 +333,11 @@ export class Renderer {
   }
 
   private disposeGPUResources(): void {
+    this.post?.dispose();
     this.triangle?.dispose();
     this.nebulaProgram?.dispose();
     this.volumeProgram?.dispose();
+    this.post = null;
     this.triangle = null;
     this.nebulaProgram = null;
     this.volumeProgram = null;
@@ -378,14 +424,22 @@ export class Renderer {
     if (!program) return;
 
     this.monitor.timer.begin();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.bufferWidth, this.bufferHeight);
+
+    // Debug views stay unbloomed so they remain readable as data.
+    const bloomed = this.debugView === 0 && (this.post?.begin(this.bufferWidth, this.bufferHeight) ?? false);
+    if (!bloomed) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.bufferWidth, this.bufferHeight);
+    }
+
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     program.use();
     this.applyUniforms(program);
     this.triangle?.draw();
+
+    if (bloomed) this.post?.present(this.bufferWidth, this.bufferHeight, mode === 'volume');
     this.monitor.timer.end();
   }
 
@@ -420,6 +474,8 @@ export class Renderer {
     u.float('uStarDensity', p.starDensity);
     if (this.activeMode() === 'volume') {
       u.int('uStepCount', Math.round(p.volumeSteps));
+    } else {
+      u.int('uDebugView', this.debugView);
     }
 
     u.vec2('uResolution', this.bufferWidth, this.bufferHeight);
@@ -445,21 +501,31 @@ export class Renderer {
       }
       return;
     }
-    if (!this.monitor.stats.gpuTimerAvailable) return;
     if (this.adaptiveCooldown > 0) {
       this.adaptiveCooldown--;
       return;
     }
 
-    const cost = this.monitor.stats.gpuMs;
-    if (cost === null) return;
+    const stats = this.monitor.stats;
+    const gpuMs = stats.gpuTimerAvailable ? stats.gpuMs : null;
+
+    // With a GPU timer the controller has a true cost signal and can recover
+    // resolution when there is headroom. Without one, frame time is vsync
+    // capped, so upscaling would oscillate; it only scales down and waits for
+    // a parameter change to reset.
+    const cost = gpuMs ?? stats.frameMs;
+    const downAt = gpuMs !== null ? 21 : 22;
+    const upAt = gpuMs !== null ? 11 : 0;
 
     let changed = false;
-    if (cost > 21 && this.adaptiveScale > 0.55) {
-      this.adaptiveScale = Math.max(0.55, this.adaptiveScale - 0.07);
+    if (cost > downAt && this.adaptiveScale > 0.55) {
+      // Solve for the scale that would land on the target cost, so a heavy
+      // frame converges in one or two steps instead of crawling down by 7%.
+      const target = this.adaptiveScale * Math.sqrt(downAt / cost);
+      this.adaptiveScale = Math.max(0.55, Math.min(this.adaptiveScale - 0.02, target));
       changed = true;
-      this.adaptiveCooldown = 40;
-    } else if (cost < 11 && this.adaptiveScale < 1) {
+      this.adaptiveCooldown = 30;
+    } else if (upAt > 0 && cost < upAt && this.adaptiveScale < 1) {
       this.adaptiveScale = Math.min(1, this.adaptiveScale + 0.035);
       changed = true;
       this.adaptiveCooldown = 40;

@@ -52,33 +52,37 @@ export class GpuTimer {
   poll(): number | null {
     if (!this.ext) return null;
 
-    if (this.gl.getParameter(this.ext.GPU_DISJOINT_EXT)) {
-      for (const query of this.pending) {
-        this.gl.deleteQuery(query);
-      }
-      this.pending = [];
-      return null;
-    }
+    // A disjoint event invalidates the timings, but the query objects are still
+    // owned by us: pull their results and recycle them instead of deleting them
+    // (a deleted query cannot be reused, which spams GL_INVALID_OPERATION).
+    const disjoint = this.gl.getParameter(this.ext.GPU_DISJOINT_EXT) as boolean;
 
     while (this.pending.length > 0) {
       const query = this.pending[0];
       const ready = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE) as boolean;
       if (!ready) break;
       const nanoseconds = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT) as number;
-      this.gl.deleteQuery(query);
-      this.free.push(query);
       this.pending.shift();
-      this.lastMs = nanoseconds / 1e6;
+      this.free.push(query);
+      if (!disjoint) this.lastMs = nanoseconds / 1e6;
     }
 
-    return this.lastMs > 0 ? this.lastMs : null;
+    return disjoint || this.lastMs <= 0 ? null : this.lastMs;
   }
 
+  /** Release query objects on a live context. */
   dispose(): void {
     if (!this.ext) return;
     if (this.active) this.gl.deleteQuery(this.active);
     for (const query of this.pending) this.gl.deleteQuery(query);
     for (const query of this.free) this.gl.deleteQuery(query);
+    this.active = null;
+    this.pending = [];
+    this.free.length = 0;
+  }
+
+  /** Drop query handles without touching GL (used after context loss). */
+  abandon(): void {
     this.active = null;
     this.pending = [];
     this.free.length = 0;
