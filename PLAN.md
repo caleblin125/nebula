@@ -1,6 +1,6 @@
 # Procedural Nebula Renderer — Working Plan
 
-Status: in progress
+Status: complete
 Goal: organic, mathematically coherent nebula structures rendered on the GPU with WebGL2 + GLSL ES 3.00, animated, controllable, reproducible, and profiled.
 
 ## Ground rules
@@ -21,11 +21,13 @@ src/
 │   ├── ShaderProgram.ts     compile/link, uniform reflection, hot status
 │   ├── FullscreenTriangle.ts VAO-less fullscreen triangle
 │   ├── Uniforms.ts          typed uniform setter + caching
+│   ├── PostFx.ts            scene target + bloom passes
 │   └── PerformanceMonitor.ts frame stats, GPU timer query
 ├── shaders/
 │   ├── vertex.glsl          fullscreen triangle (positions + uv)
 │   ├── nebula.frag          2D composition (density → emission → stars)
 │   ├── volume.frag          raymarched 3D nebula
+│   ├── post.frag            bloom bright/blur/composite
 │   ├── noise.glsl           2D/3D gradient noise, fBm, ridged, warp
 │   ├── density.glsl         density field model, shared by both renderers
 │   ├── color.glsl           palettes, emission ramp, tonemap
@@ -35,8 +37,9 @@ src/
 │   └── Presets.ts           curated presets
 ├── ui/
 │   └── Controls.ts          panel built from the schema
-└── utils/
-    └── Random.ts            deterministic PRNG helpers
+├── utils/
+│   └── Random.ts            deterministic PRNG helpers
+└── bench.ts                 benchmark, self-tests, screenshot capture
 ```
 
 Data flow: `Parameters` → uniforms → shader. `Controls` only mutates `Parameters`.
@@ -57,6 +60,8 @@ UI and renderer communicate through a small callback interface.
    palette stops; emission multiplied by density² so only filaments glow.
 7. **Composition**: additive emission over a dark blue-noise-dithered background,
    vignette, ACES-ish tonemap, dithering to fight banding.
+8. **Bloom**: bright extract + quarter-resolution downsample, two separable
+   gaussian blurs, additive composite in display space.
 
 ## Mathematical model (3D / volume)
 
@@ -112,12 +117,46 @@ slab is exited.
 
 ## Validation checklist
 
-- [ ] Compiles with `tsc --noEmit`
-- [ ] `npm run build` succeeds
-- [ ] Renders at 720p / 1080p / 1440p without errors
-- [ ] No console errors, no GL warnings
-- [ ] Controls all affect output
-- [ ] Import/export round-trips
-- [ ] Context loss restores rendering
-- [ ] Star field sparse and stable
-- [ ] Volume mode has no obvious stepping/banding
+- [x] Compiles with `tsc --noEmit`
+- [x] `npm run build` succeeds
+- [x] Renders at 720p / 1080p / 1440p without errors
+- [x] No console errors, no GL warnings
+- [x] Controls all affect output
+- [x] Import/export round-trips
+- [x] Context loss restores rendering
+- [x] Star field sparse and stable
+- [x] Volume mode has no obvious stepping/banding
+
+## Measured results
+
+Hardware: Intel Graphics (0xA7AC), ANGLE D3D11. Draw cost was measured with
+forced synchronous frames (not vsync), full resolution, adaptive quality off.
+
+| Mode | 1280×720 | 1920×1080 | 2560×1440 |
+|---|---:|---:|---:|
+| 2D field | 15.1 ms | 33.1 ms | 55.7 ms |
+| Volume (0.72 scale) | 60.4 ms | 133.1 ms | 237.6 ms |
+
+Shader compile: 15–65 ms warm, >1 s cold. Noise cost: ~50 evaluations/pixel in
+2D, ~308 in volume at 56 steps.
+
+Volume optimisations that mattered: reject samples outside the spherical gas
+envelope before noise, one warp octave instead of two, fewer base/medium
+octaves, skip the ridge field where the shape cannot support it, and 2.2×
+empty-space stepping. These took the volume from 230 ms to 36–60 ms per frame
+depending on camera angle (roughly 4–6×).
+
+Remaining limitation: the volume is still heavy on integrated graphics. Adaptive
+quality (CPU-frame fallback included) brings 1080p volume to roughly 25 fps at
+its 0.55 floor; lower volume steps and render scale manually for more.
+
+## Validation notes
+
+- Console check was performed after fixing a feedback loop in the bloom's
+  first pass (the previous frame's bloom texture remained bound to unit 1 while
+  that texture was the new render target).
+- `bench.html?test=io` runs ten import/export and clamping checks.
+- `bench.html?test=contextloss` forces `WEBGL_lose_context`, restores, then
+  verifies a GL-clean frame with lit pixels.
+- The screenshot pipeline (`bench.html?test=shot`) renders at a fixed size
+  independent of the browser panel and writes into `screenshots/`.
