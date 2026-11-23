@@ -25,6 +25,31 @@ Both must pass. If the change affects rendering, also check it in 2D and volume
 mode and across a few presets, since they exercise different density ranges and
 palettes.
 
+## Tests
+
+The project has a dependency-free self-test suite and fixed-seed visual
+regressions. Run both from a dev server before opening a pull request:
+
+```text
+bench.html?test=suite                         # 53 checks, all must pass
+bench.html?test=compare&ref=orion-deep-2d.png&preset=orion-deep&w=640&h=400
+bench.html?test=compare&ref=orion-deep-volume.png&mode=volume&steps=32&preset=orion-deep&w=640&h=400
+```
+
+The suite covers normalization, import/export, presets, exact sRGB conversion,
+shader compilation and initialization, reproducibility, density bounds and the
+envelope, and context loss/restore. The comparison renders through the same
+`renderFrame` path as the captures and must match the lossless PNG in
+`screenshots/reference/` within the stated tolerance.
+
+A shader that fails to compile makes the renderer fall back to 2D silently, so
+always confirm the mode in the harness output; the suite and comparison both
+assert it rather than recording a fallback as a pass.
+
+When the look changes on purpose, regenerate the references with `test=shot`
+using `format=png` and move the file into `screenshots/reference/`, then commit
+the new image with the change.
+
 ## Shader changes
 
 - Keep GLSL in `src/shaders/*.glsl` and assemble it through `ShaderProgram`;
@@ -37,12 +62,13 @@ palettes.
 - For visible changes, include a before/after frame. Use the capture harness:
 
   ```text
-  bench.html?test=shot&w=1920&h=1080&preset=carina-core&name=before.jpg
-  bench.html?test=shot&w=1920&h=1080&preset=carina-core&name=after.jpg
+  bench.html?test=shot&w=1600&h=1000&preset=carina-core&name=before.jpg
+  bench.html?test=shot&w=1600&h=1000&preset=carina-core&name=after.jpg
   ```
 
 - Volume changes should report the draw cost from `bench.html?mode=volume`,
-  not presentation FPS, so results are comparable.
+  not presentation FPS, so results are comparable. The HUD's noise estimate is a
+  model of the sampler, not a measurement; cite draw cost.
 
 ## Style
 
