@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#04060c" />
+    <title>Nebula — procedural density field</title>
+  </head>
+  <body>
+    <main id="stage">
+      <canvas id="nebula-canvas" aria-label="Procedural nebula rendered with WebGL2"></canvas>
+
+      <header class="masthead">
+        <h1>NEBULA</h1>
+        <p>procedural density field <span class="sep">/</span> WebGL2</p>
+      </header>
+
+      <aside class="telemetry" aria-label="Renderer telemetry">
+        <div class="telemetry-fps"><span id="stat-fps">—</span><small>fps</small></div>
+        <dl>
+          <div><dt>frame</dt><dd><span id="stat-ms">—</span> ms</dd></div>
+          <div><dt>gpu</dt><dd><span id="stat-gpu">—</span> ms</dd></div>
+          <div><dt>buffer</dt><dd><span id="stat-res">—</span></dd></div>
+          <div><dt>cost</dt><dd><span id="stat-cost">—</span></dd></div>
+          <div><dt>mode</dt><dd><span id="stat-mode">2D</span></dd></div>
+        </dl>
+      </aside>
+
+      <section id="controls" class="controls" aria-label="Nebula controls"></section>
+
+      <div id="notice" class="notice" hidden></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

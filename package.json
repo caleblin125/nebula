@@ -1,0 +1,17 @@
+{
+  "name": "nebula",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Procedural nebula renderer using WebGL2 and GLSL",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  }
+}
