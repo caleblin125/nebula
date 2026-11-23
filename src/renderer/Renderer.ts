@@ -62,7 +62,13 @@ function srgbChannelToLinear(channel: number): number {
   return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
 }
 
-function hexToLinear(hex: string): [number, number, number] {
+/** Inverse of {@link srgbChannelToLinear}; used by the self-test suite. */
+export function linearChannelToSrgb(channel: number): number {
+  const c = Math.max(0, Math.min(1, channel));
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+
+export function hexToLinear(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.replace('#', ''), 16);
   return [
     srgbChannelToLinear(((value >> 16) & 255) / 255),
@@ -70,6 +76,8 @@ function hexToLinear(hex: string): [number, number, number] {
     srgbChannelToLinear((value & 255) / 255),
   ];
 }
+
+export { srgbChannelToLinear };
 
 function buildPalette(id: PaletteId): PaletteUniforms {
   const definition = PALETTES[id];
@@ -83,10 +91,14 @@ function buildPalette(id: PaletteId): PaletteUniforms {
 export function estimateNoisePerPixel(parameters: NebulaParameters, mode: RenderMode): number {
   const octaves = Math.max(3, Math.min(9, parameters.octaves));
   if (mode === 'volume') {
-    // Warp (1) + base (≤5) + medium (≤3) + conditional ridge (2, ~half).
-    const sampleCost = 1 + Math.min(octaves, 5) + Math.min(octaves, 3) + 1;
+    // One occupied sample: warp (1) + base (≤4) + medium (2) + fine (2)
+    // + veils (2) + two dust shells (2). Empty samples exit after the warp and
+    // the base pair (7), which the 0.55 mix below averages in.
+    const occupied = 1 + Math.min(octaves, 4) + 2 + 2 + 2 + 2;
+    const empty = 1 + Math.min(octaves, 4) + 2;
+    const sampleCost = occupied * 0.55 + empty * 0.45;
     // Empty-space stepping means many rays take fewer than uStepCount samples.
-    const effectiveSteps = parameters.volumeSteps * 0.55;
+    const effectiveSteps = parameters.volumeSteps * 0.7;
     return Math.round(sampleCost * effectiveSteps);
   }
   // Warp (10 octaves) + large (≤5), medium, fine, micro, detail, grain, mask,
@@ -474,9 +486,8 @@ export class Renderer {
     u.float('uStarDensity', p.starDensity);
     if (this.activeMode() === 'volume') {
       u.int('uStepCount', Math.round(p.volumeSteps));
-    } else {
-      u.int('uDebugView', this.debugView);
     }
+    u.int('uDebugView', this.debugView);
 
     u.vec2('uResolution', this.bufferWidth, this.bufferHeight);
 

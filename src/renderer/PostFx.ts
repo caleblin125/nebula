@@ -16,8 +16,8 @@ import { FullscreenTriangle } from './FullscreenTriangle';
 import { ShaderProgram } from './ShaderProgram';
 
 const BLOOM_DIVISOR = 4;
-const THRESHOLD = 0.32;
-const STRENGTH = 0.9;
+const THRESHOLD = 0.36;
+const STRENGTH = 0.72;
 // The volume already self-glows: front-to-back integration builds a broad
 // bright core, and the 2D bloom profile would clip all of it to flat white.
 // A higher threshold and lower gain leave the nucleus its colour and structure.

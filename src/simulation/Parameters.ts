@@ -30,19 +30,19 @@ export const PALETTES: Record<PaletteId, PaletteDefinition> = {
   },
   carina: {
     label: 'Carina',
-    stops: ['#2e0d18', '#6b1c30', '#b33a4f', '#e8875a', '#ffd2a8'],
+    stops: ['#2e0d18', '#6b1c30', '#b33a4f', '#e0764a', '#ffb27a'],
     background: '#0a0406',
     accent: '#ff9a8a',
   },
   veil: {
     label: 'Veil',
-    stops: ['#08201f', '#0f4a48', '#2b8f7c', '#77c79c', '#dff7d8'],
+    stops: ['#061a22', '#0d4356', '#1b7f96', '#5cc0c4', '#d8f6f2'],
     background: '#03090a',
     accent: '#6fe3c4',
   },
   ember: {
     label: 'Ember',
-    stops: ['#220a08', '#571b13', '#a63f21', '#dd8a44', '#ffc989'],
+    stops: ['#220a08', '#571b13', '#a63f21', '#d97a34', '#ffab5e'],
     background: '#070403',
     accent: '#ffb070',
   },
@@ -110,7 +110,7 @@ export const DEFAULT_PARAMETERS: NebulaParameters = {
   mode: '2d',
   renderScale: 1,
   adaptiveQuality: true,
-  volumeSteps: 56,
+  volumeSteps: 48,
 };
 
 type NumberKeys<T> = {
