@@ -1,22 +1,33 @@
 /**
- * Application shell: mounts the renderer, telemetry and controls.
+ * Demo application shell.
  *
- * Nothing in here is required by the renderer itself — the same modules can be
- * embedded in another page by constructing `Renderer` and `Controls`.
+ * The demo is an ordinary consumer of the public library entry point: it builds
+ * a versioned configuration, constructs `Nebula`, wires telemetry/events and
+ * mounts the development control panel. Nothing in the library depends on this
+ * file, the stylesheet or the page markup.
  */
 
 import './style.css';
 
-import { Renderer, type RendererStats } from './renderer/Renderer';
-import { Controls } from './ui/Controls';
 import {
   DEFAULT_PARAMETERS,
+  DEFAULT_CAMERA,
+  Nebula,
+  NebulaError,
   PALETTES,
+  applyPreset,
+  detectPreset,
+  fromParameters,
   normalizeParameters,
+  normalizeSeed,
+  parseConfig,
+  presetById,
+  randomSeed,
+  serializeConfig,
   type NebulaParameters,
-} from './simulation/Parameters';
-import { applyPreset, detectPreset, presetById } from './simulation/Presets';
-import { normalizeSeed, randomSeed } from './utils/Random';
+  type RendererStats,
+} from './library';
+import { Controls } from './ui/Controls';
 
 function mustElement<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -95,13 +106,13 @@ function initialParameters(): NebulaParameters {
   return parameters;
 }
 
-function updateStats(stats: RendererStats, compileMs: number): void {
+function updateStats(stats: RendererStats): void {
   statFps.textContent = String(Math.round(stats.fps));
   statMs.textContent = stats.frameMs.toFixed(1);
   statGpu.textContent = stats.gpuMs === null ? 'n/a' : stats.gpuMs.toFixed(1);
   statRes.textContent = `${stats.bufferWidth}×${stats.bufferHeight}`;
   statCost.textContent = `≈${stats.noisePerPixel}/px`;
-  statCost.title = `${stats.noisePerPixel} noise evaluations per pixel · shaders compiled in ${compileMs.toFixed(0)} ms`;
+  statCost.title = `${stats.noisePerPixel} noise evaluations per pixel · shaders compiled in ${stats.compileMs.toFixed(0)} ms`;
   statMode.textContent = stats.mode === 'volume' ? '3D' : '2D';
   statMode.title = stats.mode === 'volume' ? 'Raymarched volume' : 'Screen-space field';
 }
@@ -127,31 +138,26 @@ function main(): void {
   if (new URLSearchParams(window.location.search).get('ui') === '0') {
     document.documentElement.classList.add('hide-ui');
   }
-  let renderer: Renderer;
 
+  let nebula: Nebula;
   try {
-    renderer = new Renderer(canvas, parameters, {
-      onStats: (stats) => updateStats(stats, stats.compileMs),
-      onStatus: (status) => {
-        if (status === 'context-lost') {
-          showNotice(
-            'Graphics context lost',
-            'The browser released the GPU context. Rendering will resume automatically when it is restored.',
-          );
-        } else if (status === 'restored') {
-          hideNotice();
-          showToast('Rendering restored');
-        }
-      },
-      onError: (message) => showToast(message),
+    nebula = new Nebula({
+      canvas,
+      config: fromParameters(parameters, DEFAULT_CAMERA),
+      paused: parameters.paused,
+      autoStart: true,
     });
   } catch (error) {
     console.error(error);
     const message = error instanceof Error ? error.message : String(error);
-    showNotice(
-      'WebGL2 unavailable',
-      `${message}\n\nTry a current version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.`,
-    );
+    if (error instanceof NebulaError && error.code === 'webgl2-unavailable') {
+      showNotice(
+        'WebGL2 unavailable',
+        `${message}\n\nTry a current version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.`,
+      );
+    } else {
+      showNotice('Nebula failed to start', message);
+    }
     return;
   }
 
@@ -160,6 +166,19 @@ function main(): void {
     '--accent-soft',
     PALETTES[parameters.palette].accent + '38',
   );
+
+  nebula.on('performance', updateStats);
+  nebula.on('error', ({ message }) => showToast(message));
+  nebula.on('contextlost', () => {
+    showNotice(
+      'Graphics context lost',
+      'The browser released the GPU context. Rendering will resume automatically when it is restored.',
+    );
+  });
+  nebula.on('contextrestored', () => {
+    hideNotice();
+    showToast('Rendering restored');
+  });
 
   const debugParam = new URLSearchParams(window.location.search).get('debug');
   if (debugParam) {
@@ -170,13 +189,13 @@ function main(): void {
       shape: 4,
       mask: 5,
     };
-    renderer.setDebugView(views[debugParam] ?? 0);
+    nebula.setDebugView(views[debugParam] ?? 0);
   }
 
   let urlTimer = 0;
   let controls: Controls | undefined;
   const applyParameters = (next: NebulaParameters, fromPanel: boolean): void => {
-    renderer.setParameters(next);
+    nebula.setParameters(next);
     if (!fromPanel) controls?.setParameters(next);
     window.clearTimeout(urlTimer);
     urlTimer = window.setTimeout(() => syncUrl(next), 250);
@@ -186,15 +205,20 @@ function main(): void {
     parameters,
     onChange: (next) => applyParameters(next, true),
     onNotice: showToast,
-    volumeAvailable: renderer.volumeAvailable,
+    volumeAvailable: nebula.volumeAvailable,
+    onExport: () => serializeConfig(nebula.getConfig()),
+    onImport: (text) => {
+      nebula.setConfig(parseConfig(text));
+      return nebula.getParameters();
+    },
   });
 
-  if (!renderer.volumeAvailable) {
+  if (!nebula.volumeAvailable) {
     controls.setVolumeAvailable(false);
   }
 
   // Telemetry starts immediately, even before the first animation frame.
-  updateStats(renderer.getStats(), 0);
+  updateStats(nebula.getStats());
   syncUrl(parameters);
 
   window.addEventListener('keydown', (event) => {
@@ -204,14 +228,14 @@ function main(): void {
       return;
     }
 
+    const current = nebula.getParameters();
     if (event.code === 'Space') {
       event.preventDefault();
-      const next = { ...renderer.getParameters(), paused: !renderer.getParameters().paused };
+      const next = { ...current, paused: !current.paused };
       applyParameters(next, false);
       showToast(next.paused ? 'Time frozen' : 'Time running');
     } else if (event.key.toLowerCase() === 'r') {
-      const next = { ...renderer.getParameters(), seed: randomSeed() };
-      applyParameters(next, false);
+      applyParameters({ ...current, seed: randomSeed() }, false);
       showToast('New seed');
     }
   });
@@ -219,9 +243,12 @@ function main(): void {
   // Expose a tiny debugging handle for console experiments.
   Object.assign(window, {
     nebula: {
-      renderer,
+      instance: nebula,
       get parameters() {
-        return renderer.getParameters();
+        return nebula.getParameters();
+      },
+      get config() {
+        return nebula.getConfig();
       },
     },
   });

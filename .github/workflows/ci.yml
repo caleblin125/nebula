@@ -36,3 +36,15 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Install example consumer
+        run: npm install --no-audit --no-fund
+        working-directory: examples/embed
+
+      - name: Check package entry points
+        run: npm run check
+        working-directory: examples/embed
+
+      - name: Build example
+        run: npm run build
+        working-directory: examples/embed

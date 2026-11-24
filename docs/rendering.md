@@ -133,6 +133,17 @@ builds a broad bright core; the 2D profile flattened it to a white plate.
 
 ## Volume
 
+The camera is a first-class input, independent of the density field. The
+renderer resolves `CameraParameters` for the frame and uploads `uCameraPos`,
+`uCameraTarget` and `uCameraFov`; the fragment shader derives its basis from
+them. With `position: null` the default is the original slow orbit
+(`yaw = 2.3 + t·(0.012 + rotation·0.09)`, radius 1.88, height
+`0.18 + 0.1·sin(0.021t)`, FOV 0.66), so existing volume frames are unchanged.
+An explicit position and target freeze the view while the gas keeps animating;
+`zoom` divides the effective field scale. Named presets (`default`, `wide`,
+`close`, `high`, `side`) are part of the public configuration. The 2D shader
+ignores camera uniforms.
+
 The camera ray is intersected with the unit cube and marched front to back.
 Each sample is an emitting **gas** term plus an absorbing **dust** term, returned
 by `sampleDensity3D` as `VolumeSample {density, dust, detail}`:
@@ -217,9 +228,11 @@ structure is defined entirely by the seed and parameters.
 ## Tests
 
 `npm run dev`, then open `/bench.html?test=suite`. The suite checks
-normalization, import/export, presets, exact sRGB conversion, shader compilation
-and initialization, reproducibility, density bounds and envelope, and context
-loss/restore — 53 checks, no external dependencies.
+normalization, import/export, presets, exact sRGB conversion, the versioned
+library configuration, the camera model, shader compilation and initialization,
+the library lifecycle and its events, multiple instances, reproducibility,
+density bounds and envelope, and context loss/restore — 96 checks, no external
+dependencies.
 
 `/bench.html?test=compare&ref=orion-deep-2d.png&preset=orion-deep&w=640&h=400`
 renders a fixed-seed frame and compares it against the lossless PNG reference in

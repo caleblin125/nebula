@@ -7,6 +7,9 @@ uniform float uVignette;
 uniform float uStarDensity;
 uniform int uStepCount;
 uniform int uDebugView;
+uniform vec3 uCameraPos;
+uniform vec3 uCameraTarget;
+uniform float uCameraFov;
 
 #include "noise.glsl"
 #include "density.glsl"
@@ -49,18 +52,22 @@ void main() {
   vec2 sky = (frag - 0.5 * uResolution) / uResolution.y;
   float t = uTime * uAnimationSpeed;
 
-  // Camera: slow orbit whose rate is nudged by the rotation parameter. The
-  // framing is chosen so the gas sphere fills most of the frame at any aspect
-  // while leaving a margin of sky around it: a sphere that touches the frame
-  // edge reads as a cut-out ball rather than gas in space.
-  float yaw = 2.3 + t * (0.012 + uRotation * 0.09);
-  vec3 ro = vec3(cos(yaw) * 1.88, 0.18 + 0.1 * sin(t * 0.021), sin(yaw) * 1.88);
-  vec3 forward = normalize(-ro);
-  vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), forward));
+  // Camera: supplied by the host. The default configuration reproduces the
+  // original slow orbit, but an explicit position/target/FOV can frame the same
+  // field from anywhere. The framing leaves a margin of sky around the gas: a
+  // sphere that touches the frame edge reads as a cut-out ball rather than gas
+  // in space.
+  vec3 ro = uCameraPos;
+  vec3 forward = normalize(uCameraTarget - uCameraPos);
+  // A camera looking straight down the up axis would make the right vector
+  // degenerate; pick another world axis in that one case.
+  vec3 worldUp = abs(forward.y) > 0.9995 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  vec3 right = normalize(cross(worldUp, forward));
   vec3 up = cross(forward, right);
 
-  const float FOV = 0.66;
-  vec3 rd = normalize(forward + (sky.x * 2.0) * FOV * right + (sky.y * 2.0) * FOV * up);
+  vec3 rd = normalize(
+    forward + (sky.x * 2.0) * uCameraFov * right + (sky.y * 2.0) * uCameraFov * up
+  );
 
   vec2 hit = intersectCube(ro, rd, 0.98);
   vec3 accum = vec3(0.0);

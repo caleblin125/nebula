@@ -1,0 +1,21 @@
+{
+  "name": "nebula-embed-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal consumer of the Nebula library, installed from the repository root.",
+  "type": "module",
+  "scripts": {
+    "predev": "npm --prefix ../.. run build:lib",
+    "dev": "vite",
+    "prebuild": "npm --prefix ../.. run build:lib",
+    "build": "vite build",
+    "precheck": "npm --prefix ../.. run build:lib",
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "nebula": "file:../.."
+  },
+  "devDependencies": {
+    "vite": "^6.0.3"
+  }
+}

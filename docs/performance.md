@@ -104,7 +104,7 @@ reports one, buffer resolution, noise evaluations per pixel and the active mode.
 ```text
 /bench.html?w=1920&h=1080&preset=orion-deep          # draw-cost benchmark
 /bench.html?mode=volume&w=1280&h=720                # volume benchmark
-/bench.html?test=suite                              # 53 self-checks
+/bench.html?test=suite                              # 96 self-checks
 /bench.html?test=compare&ref=orion-deep-2d.png&preset=orion-deep&w=640&h=400
 /bench.html?test=compare&ref=orion-deep-volume.png&mode=volume&steps=32&preset=orion-deep&w=640&h=400
 /bench.html?test=io                                 # JSON round-trip + clamping

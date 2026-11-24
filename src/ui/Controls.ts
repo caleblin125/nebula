@@ -29,6 +29,10 @@ export interface ControlsOptions {
   onChange: (parameters: NebulaParameters) => void;
   onNotice?: (message: string) => void;
   volumeAvailable?: boolean;
+  /** Serialize the current look for export. Defaults to the legacy parameter envelope. */
+  onExport?: (parameters: NebulaParameters) => string;
+  /** Parse an imported document and apply it. Defaults to the legacy parameter parser. */
+  onImport?: (text: string) => NebulaParameters;
 }
 
 interface RangeBinding {
@@ -60,6 +64,8 @@ export class Controls {
   private readonly root: HTMLElement;
   private readonly onChange: (parameters: NebulaParameters) => void;
   private readonly onNotice: (message: string) => void;
+  private readonly onExport: ((parameters: NebulaParameters) => string) | null;
+  private readonly onImport: ((text: string) => NebulaParameters) | null;
 
   private parameters: NebulaParameters;
   private volumeAvailable: boolean;
@@ -79,6 +85,8 @@ export class Controls {
     this.parameters = cloneParameters(options.parameters);
     this.onChange = options.onChange;
     this.onNotice = options.onNotice ?? (() => undefined);
+    this.onExport = options.onExport ?? null;
+    this.onImport = options.onImport ?? null;
     this.volumeAvailable = options.volumeAvailable ?? true;
 
     this.build();
@@ -438,7 +446,9 @@ export class Controls {
   // -------------------------------------------------------------------------
 
   private exportJson(): void {
-    const text = serializeParameters(this.parameters);
+    const text = this.onExport
+      ? this.onExport(this.parameters)
+      : serializeParameters(this.parameters);
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = element('a');
@@ -456,14 +466,18 @@ export class Controls {
 
     try {
       const text = await file.text();
-      const parsed = parseParameters(text);
-      this.parameters = parsed;
+      const parsed = this.onImport ? this.onImport(text) : parseParameters(text);
+      this.parameters = cloneParameters(parsed);
       this.refresh();
       this.commit();
       this.onNotice('Parameters imported');
     } catch (error) {
       console.error(error);
-      this.onNotice('Import failed — invalid JSON');
+      this.onNotice(
+        error instanceof Error && error.name === 'ConfigError'
+          ? `Import failed — ${error.message}`
+          : 'Import failed — invalid JSON',
+      );
     }
   }
 }

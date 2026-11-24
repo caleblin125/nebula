@@ -33,6 +33,23 @@ import {
 } from './simulation/Parameters';
 import { applyPreset, presetById, PRESETS } from './simulation/Presets';
 import { normalizeSeed } from './utils/Random';
+import {
+  CAMERA_PRESETS,
+  CONFIG_VERSION,
+  ConfigError,
+  DEFAULT_CAMERA,
+  Nebula,
+  NebulaError,
+  cameraPreset,
+  fromParameters,
+  normalizeCamera,
+  normalizeConfig,
+  orbitPosition,
+  parseConfig,
+  resolveCamera,
+  serializeConfig,
+  type NebulaConfig,
+} from './library';
 
 const query = new URLSearchParams(window.location.search);
 const canvas = document.getElementById('bench-canvas') as HTMLCanvasElement;
@@ -135,6 +152,7 @@ async function runPerf(): Promise<void> {
     onStatus: (status) => statuses.push(status),
     onError: (message) => statuses.push(`error: ${message}`),
   });
+  renderer.start();
 
   const deltas: number[] = [];
   let frames = 0;
@@ -619,6 +637,55 @@ function digest(pixels: Uint8ClampedArray): string {
   return hash.toString(16).padStart(8, '0');
 }
 
+/** Off-screen canvas for independent library instances. */
+function createSurface(width: number, height: number): HTMLCanvasElement {
+  const surface = document.createElement('canvas');
+  surface.style.cssText =
+    `position:fixed;left:0;top:0;width:${width}px;height:${height}px;` +
+    'opacity:0;pointer-events:none;';
+  surface.setAttribute('aria-hidden', 'true');
+  document.body.append(surface);
+  return surface;
+}
+
+/** Read back a surface drawn by a library instance. */
+function readSurface(surface: HTMLCanvasElement): Uint8ClampedArray {
+  const gl = surface.getContext('webgl2');
+  if (!gl) throw new Error('No WebGL2 context on the test surface.');
+  const raw = new Uint8Array(surface.width * surface.height * 4);
+  gl.readPixels(0, 0, surface.width, surface.height, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+  return new Uint8ClampedArray(raw);
+}
+
+function litProbes(surface: HTMLCanvasElement): number {
+  const gl = surface.getContext('webgl2');
+  if (!gl) return 0;
+  const pixel = new Uint8Array(4);
+  let lit = 0;
+  const probes: Array<[number, number]> = [
+    [0.25, 0.5],
+    [0.5, 0.5],
+    [0.75, 0.5],
+  ];
+  for (const [u, v] of probes) {
+    gl.readPixels(
+      Math.round(surface.width * u),
+      Math.round(surface.height * v),
+      1,
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      pixel,
+    );
+    if (pixel[0] + pixel[1] + pixel[2] > 0) lit++;
+  }
+  return lit;
+}
+
+function sameVec(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((value, index) => Math.abs(value - b[index]) < 1e-12);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -736,6 +803,135 @@ async function runSuite(): Promise<void> {
     'seed, palette and density differ',
   );
 
+  // -- versioned configuration ---------------------------------------------
+  begin('library configuration');
+  const configSource: NebulaParameters = {
+    ...DEFAULT_PARAMETERS,
+    seed: 32123,
+    density: 1.22,
+    mode: 'volume',
+    volumeSteps: 40,
+    paused: true,
+  };
+  const config = fromParameters(configSource, {
+    position: [1.2, 0.5, 1.8],
+    target: [0, 0.05, 0],
+    fov: 0.72,
+    zoom: 1.25,
+  });
+  const configRoundTrip = parseConfig(serializeConfig(config));
+  add(
+    'configuration carries a format and version',
+    config.format === 'nebula-config' && config.version === CONFIG_VERSION,
+    `v${config.version}`,
+  );
+  add(
+    'configuration round-trips exactly',
+    JSON.stringify(configRoundTrip) === JSON.stringify(config),
+    'generation, rendering and camera',
+  );
+  add(
+    'generation is separate from rendering',
+    !('mode' in config.generation) && !('emission' in config.generation) && !('density' in config.rendering),
+    'split envelope',
+  );
+  add(
+    'camera survives a round-trip',
+    sameVec(configRoundTrip.camera.position ?? [], [1.2, 0.5, 1.8]) && configRoundTrip.camera.zoom === 1.25,
+    'explicit view preserved',
+  );
+  add(
+    'pause state stays out of the artwork',
+    !Object.prototype.hasOwnProperty.call(config.rendering, 'paused') &&
+      !Object.prototype.hasOwnProperty.call(config, 'paused'),
+    'host-owned playback state',
+  );
+  const legacyConfig = parseConfig(serializeParameters(configSource));
+  add(
+    'legacy parameter exports still import',
+    legacyConfig.seed === configSource.seed &&
+      legacyConfig.rendering.mode === 'volume' &&
+      legacyConfig.generation.density === 1.22,
+    `seed ${legacyConfig.seed}, ${legacyConfig.rendering.mode}`,
+  );
+  const bareConfig = normalizeConfig({ seed: 77, density: 9, camera: { fov: 99 } });
+  add(
+    'bare objects normalize and clamp',
+    bareConfig.seed === 77 && bareConfig.generation.density === 1.8 && bareConfig.camera.fov === 1.5,
+    `seed ${bareConfig.seed}, density ${bareConfig.generation.density}, fov ${bareConfig.camera.fov}`,
+  );
+  add(
+    'seeds normalize into range',
+    normalizeConfig({ seed: 0 }).seed === 1 && normalizeConfig({ seed: -8 }).seed === 1,
+    'magnitude clamped into 1..999999',
+  );
+  let futureRejected = false;
+  try {
+    normalizeConfig({ format: 'nebula-config', version: 2 });
+  } catch (error) {
+    futureRejected = error instanceof ConfigError;
+  }
+  add('a newer configuration version is rejected', futureRejected, 'version 2');
+  let invalidJsonRejected = false;
+  try {
+    parseConfig('{nope');
+  } catch (error) {
+    invalidJsonRejected = error instanceof ConfigError;
+  }
+  add('invalid JSON raises ConfigError', invalidJsonRejected, 'parseConfig');
+
+  // -- camera model --------------------------------------------------------
+  begin('camera');
+  const orbit = orbitPosition(0, 0);
+  add(
+    'default framing matches the original orbit',
+    sameVec(orbit, [Math.cos(2.3) * 1.88, 0.18, Math.sin(2.3) * 1.88]),
+    `(${orbit.map((value) => value.toFixed(3)).join(', ')})`,
+  );
+  const defaultView = resolveCamera(DEFAULT_CAMERA, 0, 0);
+  add(
+    'default camera resolves to the same view',
+    sameVec(defaultView.position, orbit) &&
+      sameVec(defaultView.target, [0, 0, 0]) &&
+      Math.abs(defaultView.fov - 0.66) < 1e-12,
+    'position, target and FOV preserved',
+  );
+  add(
+    'zoom narrows the field of view',
+    Math.abs(resolveCamera({ ...DEFAULT_CAMERA, zoom: 2 }, 0, 0).fov - 0.33) < 1e-12,
+    '0.66 / 2 = 0.33',
+  );
+  const clampedCamera = normalizeCamera({ fov: 99, zoom: 0.01, target: [Number.NaN, 0, 0] });
+  add(
+    'camera values clamp and reject non-finite vectors',
+    clampedCamera.fov === 1.5 &&
+      clampedCamera.zoom === 0.4 &&
+      sameVec(clampedCamera.target, DEFAULT_CAMERA.target),
+    `fov ${clampedCamera.fov}, zoom ${clampedCamera.zoom}`,
+  );
+  add(
+    'a degenerate view falls back to the orbit',
+    normalizeCamera({ position: [0, 0, 0] }).position === null &&
+      normalizeCamera({ position: [Number.NaN, 0, 0] }).position === null,
+    'eye on target and non-finite positions rejected',
+  );
+  add(
+    'five named camera presets are available',
+    Object.keys(CAMERA_PRESETS).length === 5 &&
+      CAMERA_PRESETS.default.position === null &&
+      cameraPreset('missing') === undefined,
+    Object.keys(CAMERA_PRESETS).join(', '),
+  );
+  add(
+    'camera presets frame distinct directions',
+    new Set(
+      Object.values(CAMERA_PRESETS)
+        .filter((preset) => preset.position !== null)
+        .map((preset) => preset.position?.map((value) => value.toFixed(2)).join(',')),
+    ).size === 4,
+    'four explicit views',
+  );
+
   // -- colour --------------------------------------------------------------
   begin('colour conversion');
   // Reference value for exact sRGB: 0.5 encodes 0.21404114048223255 linear.
@@ -846,6 +1042,221 @@ async function runSuite(): Promise<void> {
     `${(volumeStats.bufferWidth / volumeStats.bufferHeight).toFixed(3)}`,
   );
   volumeRenderer.dispose();
+
+  // -- library lifecycle ---------------------------------------------------
+  begin('library lifecycle');
+  progress('library lifecycle');
+  const still = normalizeParameters({ ...DEFAULT_PARAMETERS, paused: true, adaptiveQuality: false });
+
+  let noTargetCode = 'none';
+  try {
+    new Nebula({});
+  } catch (error) {
+    noTargetCode = error instanceof NebulaError ? error.code : 'other';
+  }
+  add('a missing render target is rejected', noTargetCode === 'no-target', noTargetCode);
+
+  const manualSurface = createSurface(180, 120);
+  const manual = new Nebula({
+    canvas: manualSurface,
+    config: fromParameters(still),
+    autoStart: false,
+  });
+  let readyCount = 0;
+  let readyBuffer = 0;
+  manual.on('ready', (payload) => {
+    readyCount++;
+    readyBuffer = payload.stats.bufferWidth;
+  });
+  await Promise.resolve();
+  add(
+    'ready is emitted after construction',
+    readyCount === 1 && readyBuffer > 0,
+    `${readyCount} event, ${readyBuffer}px buffer`,
+  );
+  add(
+    'manual mode does not start an animation loop',
+    !manual.isRunning && !manual.autoStart,
+    `${manual.isRunning ? 'running' : 'idle'}`,
+  );
+
+  let renderEvents = 0;
+  let changeEvents = 0;
+  let performanceEvents = 0;
+  manual.on('render', () => renderEvents++);
+  manual.on('configurationchange', () => changeEvents++);
+  manual.on('performance', () => performanceEvents++);
+
+  manual.render(0);
+  add(
+    'manual render draws one frame at the requested time',
+    renderEvents === 1 && manual.getTime() === 0,
+    `${renderEvents} render event(s)`,
+  );
+  const manualA = readSurface(manualSurface);
+  manual.render(0);
+  const manualB = readSurface(manualSurface);
+  add('the same time renders identical pixels', framesEqual(manualA, manualB), digest(manualA));
+  manual.render(4);
+  const manualC = readSurface(manualSurface);
+  add('a later time advances the field', !framesEqual(manualA, manualC), 't=4 differs from t=0');
+
+  manual.setCamera({ zoom: 1.35 });
+  add(
+    'camera changes emit configurationchange',
+    changeEvents > 0 && manual.getCamera().zoom === 1.35,
+    `${changeEvents} change event(s)`,
+  );
+  const detachedCamera = manual.getCamera();
+  (detachedCamera.target as [number, number, number])[0] = 99;
+  add(
+    'getCamera returns a detached copy',
+    manual.getCamera().target[0] === 0,
+    `target ${manual.getCamera().target.join(', ')}`,
+  );
+  manual.resetCamera();
+  add(
+    'camera reset restores the built-in orbit',
+    manual.getCamera().position === null && manual.getCamera().zoom === 1,
+    'orbit, zoom 1',
+  );
+
+  manual.setConfig({
+    generation: { palette: 'ice' },
+    rendering: { mode: 'volume', volumeSteps: 24, adaptiveQuality: false },
+    camera: { position: [1, 0, 0], target: [0, 0, 0], fov: 0.7, zoom: 1 },
+  });
+  add(
+    'setConfig applies artwork, rendering and camera together',
+    manual.getConfig().generation.palette === 'ice' &&
+      manual.getParameters().mode === 'volume' &&
+      sameVec(manual.getCamera().position ?? [], [1, 0, 0]),
+    'config replaced as one unit',
+  );
+  let badVersionCode = 'none';
+  try {
+    manual.setConfig({ format: 'nebula-config', version: 2 } as unknown as NebulaConfig);
+  } catch (error) {
+    badVersionCode = error instanceof NebulaError ? error.code : 'other';
+  }
+  add('setConfig rejects unsupported versions', badVersionCode === 'configuration', badVersionCode);
+
+  manual.start();
+  add('start enables the internal loop', manual.isRunning, 'running');
+  manual.stop();
+  add('stop returns to manual rendering', !manual.isRunning, 'stopped');
+
+  manual.render(0);
+  await delay(260);
+  manual.render(0);
+  add(
+    'performance statistics are reported',
+    performanceEvents > 0,
+    `${performanceEvents} sample(s)`,
+  );
+
+  manual.dispose();
+  let disposedCode = 'none';
+  try {
+    manual.render(0);
+  } catch (error) {
+    disposedCode = error instanceof NebulaError ? error.code : 'other';
+  }
+  add('dispose rejects further use', disposedCode === 'configuration', disposedCode);
+  manual.dispose();
+  add('dispose is idempotent', true, 'second call is a no-op');
+  manualSurface.remove();
+
+  const cameraSurface = createSurface(160, 100);
+  const cameraNebula = new Nebula({
+    canvas: cameraSurface,
+    config: fromParameters({ ...still, mode: 'volume', volumeSteps: 24 }),
+    autoStart: false,
+  });
+  cameraNebula.render(0);
+  const orbitFrame = readSurface(cameraSurface);
+  cameraNebula.setCamera({
+    position: CAMERA_PRESETS.side.position,
+    target: CAMERA_PRESETS.side.target,
+    fov: CAMERA_PRESETS.side.fov,
+    zoom: 1,
+  });
+  cameraNebula.render(0);
+  const sideFrame = readSurface(cameraSurface);
+  const cameraDifference = compareFrames(orbitFrame, sideFrame);
+  add(
+    'an explicit camera reframes the same field',
+    cameraDifference.changedFraction > 0.02,
+    `${(cameraDifference.changedFraction * 100).toFixed(0)}% of pixels differ`,
+  );
+  cameraNebula.setCameraPreset('close');
+  add(
+    'named camera presets apply',
+    JSON.stringify(cameraNebula.getCamera()) === JSON.stringify(cameraPreset('close')),
+    'close',
+  );
+  cameraNebula.dispose();
+  cameraSurface.remove();
+
+  const surfaceA = createSurface(144, 96);
+  const surfaceB = createSurface(144, 96);
+  const instanceA = new Nebula({
+    canvas: surfaceA,
+    config: fromParameters({ ...still, seed: 101 }),
+    autoStart: false,
+  });
+  const instanceB = new Nebula({
+    canvas: surfaceB,
+    config: fromParameters({ ...still, seed: 202 }),
+    autoStart: false,
+  });
+  instanceA.render(0);
+  instanceB.render(0);
+  const pixelsA = readSurface(surfaceA);
+  const pixelsB = readSurface(surfaceB);
+  add(
+    'two instances render independently',
+    pixelsA.length === pixelsB.length && !framesEqual(pixelsA, pixelsB),
+    'different seeds, different frames',
+  );
+  instanceA.setCamera({ zoom: 1.5 });
+  instanceB.render(0);
+  add(
+    'instances keep separate configuration',
+    instanceA.getCamera().zoom === 1.5 && instanceB.getCamera().zoom === 1,
+    'camera state isolated',
+  );
+  instanceA.dispose();
+  instanceB.render(0);
+  const survivingProbes = litProbes(surfaceB);
+  add(
+    'disposing one instance leaves the other alive',
+    survivingProbes > 0,
+    `${survivingProbes}/3 probes lit`,
+  );
+  instanceB.dispose();
+  surfaceA.remove();
+  surfaceB.remove();
+
+  const webglProto = HTMLCanvasElement.prototype as unknown as { getContext: unknown };
+  const originalGetContext = webglProto.getContext;
+  try {
+    webglProto.getContext = () => null;
+    add('isSupported is honest without WebGL2', Nebula.isSupported() === false, 'probe returned null');
+    let initCode = 'none';
+    try {
+      new Nebula({ canvas: document.createElement('canvas') });
+    } catch (error) {
+      initCode = error instanceof NebulaError ? error.code : 'other';
+    }
+    add(
+      'invalid WebGL2 initialization raises NebulaError',
+      initCode === 'webgl2-unavailable',
+      initCode,
+    );
+  } finally {
+    webglProto.getContext = originalGetContext;
+  }
 
   // -- reproducibility -----------------------------------------------------
   begin('reproducibility');
@@ -1005,10 +1416,41 @@ async function runSuite(): Promise<void> {
   }
   live.dispose();
 
+  // The same recovery path through the library's event surface.
+  const recoverySurface = createSurface(240, 160);
+  const recovery = new Nebula({
+    canvas: recoverySurface,
+    config: fromParameters({ ...still, paused: true }),
+    autoStart: false,
+  });
+  let libraryLost = 0;
+  let libraryRestored = 0;
+  recovery.on('contextlost', () => libraryLost++);
+  recovery.on('contextrestored', () => libraryRestored++);
+  recovery.render(0);
+  const recoveryExtension = recoverySurface
+    .getContext('webgl2')
+    ?.getExtension('WEBGL_lose_context');
+  if (recoveryExtension) {
+    recoveryExtension.loseContext();
+    await delay(300);
+    recoveryExtension.restoreContext();
+    await delay(900);
+    recovery.render(0);
+    const recoveredProbes = litProbes(recoverySurface);
+    add('library emits contextlost', libraryLost > 0, `${libraryLost} event(s)`);
+    add('library emits contextrestored', libraryRestored > 0, `${libraryRestored} event(s)`);
+    add('library renders after restore', recoveredProbes > 0, `${recoveredProbes}/3 probes lit`);
+  }
+  recovery.dispose();
+  recoverySurface.remove();
+
   // -- report --------------------------------------------------------------
   const failed = sections.flatMap((section) => section.checks).filter(([, ok]) => !ok);
   const total = sections.reduce((count, section) => count + section.checks.length, 0);
-  document.title = `suite ${failed.length === 0 ? 'PASS' : 'FAIL'}`;
+  document.title =
+    `${failed.length === 0 ? 'suite PASS' : 'suite FAIL'} · ` +
+    `${total - failed.length}/${total}`;
   (window as unknown as { benchResult: unknown }).benchResult = { sections, total, failed: failed.length };
 
   render(
@@ -1102,6 +1544,7 @@ async function runContextLossTest(): Promise<void> {
     },
     onStatus: (status) => statuses.push(status),
   });
+  renderer.start();
 
   render('context-loss test running…\n');
   await new Promise((resolve) => setTimeout(resolve, 1200));

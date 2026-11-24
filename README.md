@@ -35,13 +35,72 @@ No rendering libraries or frameworks — just TypeScript, Vite and raw GLSL.
 ```bash
 npm install
 npm run dev      # http://localhost:5183/
-npm run build    # type-check + production build into dist/
+npm run build    # demo build (dist/) + library build (dist-lib/)
+npm run build:lib
 npm run preview
 ```
 
 Node 20 or newer. A WebGL2 browser with hardware acceleration is required; if
 WebGL2 is unavailable the page shows a notice instead of failing silently. All
 visuals are generated at runtime — there are no image assets.
+
+## Use as a library
+
+The renderer is a framework-free ESM/CJS package with TypeScript declarations
+and GLSL bundled as strings. The demo in this repository is an ordinary
+consumer of the same public entry point.
+
+```ts
+import { Nebula } from 'nebula';
+
+const nebula = new Nebula({
+  container: document.querySelector('#stage')!,
+  config: {
+    seed: 90210,
+    generation: { density: 0.9, warp: 1.1, palette: 'violet' },
+    rendering: { mode: 'volume', volumeSteps: 40 },
+    camera: { position: null, target: [0, 0, 0], fov: 0.66, zoom: 1 },
+  },
+  autoStart: true,
+});
+
+nebula.on('ready', ({ capabilities }) => console.log(capabilities));
+nebula.setCameraPreset('wide'); // default | wide | close | high | side
+nebula.setCamera({ zoom: 1.4 }); // position: null keeps the built-in orbit
+nebula.updateParameters({ paused: true });
+
+// Manual rendering: no internal loop, deterministic frames.
+nebula.stop();
+nebula.render(0);
+
+nebula.dispose();
+```
+
+Pass `canvas` instead of `container` to use an existing element. `render(seconds)`
+draws exactly one frame at that shader time; `start()`/`stop()` control the
+optional internal loop. Each instance owns its context, configuration and
+camera, so several can live on one page.
+
+Configuration is versioned (`nebula-config`, version 1) and split into
+`generation`, `rendering` and `camera`. `paused` is host playback state and is
+not serialized. `parseConfig`/`serializeConfig` handle the envelope, and legacy
+`nebula-parameters` JSON exports still import. Events: `ready`, `error`,
+`configurationchange`, `render`, `performance`, `contextlost` and
+`contextrestored`.
+
+[`examples/embed`](examples/embed) installs this repository as a local
+dependency and imports only `nebula`:
+
+```bash
+cd examples/embed
+npm install
+npm run dev       # example page
+npm run check     # Node check of the ESM and CJS entry points
+```
+
+The library build writes `dist-lib/nebula.js`, `dist-lib/nebula.cjs` and
+declarations under `dist-lib/types/`; the demo build keeps writing `dist/`.
+Full API details are in [docs/library.md](docs/library.md).
 
 ## Gallery
 
@@ -67,8 +126,8 @@ persistence, exposure, star density, vignette, render scale and volume steps.
 - **Presets** replace the look but keep the renderer, render scale, adaptive
   quality, volume step count and pause state.
 - **New seed** / **R** picks a fresh seed; **Reset** restores defaults.
-- **Export/Import JSON** round-trips every parameter, including pipeline
-  settings.
+- **Export/Import JSON** round-trips the versioned configuration: generation,
+  rendering and camera. Older `nebula-parameters` exports still import.
 - **Space** freezes or resumes time.
 
 URL parameters:
@@ -108,7 +167,14 @@ The full model — equations, thresholds and the compositing loop — is in
 
 ```text
 src/
-├── main.ts                  boot, URL state, telemetry, shortcuts
+├── main.ts                  demo consumer: URL state, telemetry, shortcuts
+├── library/
+│   ├── Nebula.ts            public embeddable class
+│   ├── EventBus.ts          typed lifecycle events
+│   └── index.ts             public entry point
+├── core/
+│   ├── Camera.ts            camera model, presets, original orbit
+│   └── Config.ts            versioned config + legacy migration
 ├── renderer/
 │   ├── Renderer.ts          pipeline, sizing, uniforms, adaptive quality
 │   ├── ShaderProgram.ts     compile/link + #include resolver
@@ -132,14 +198,17 @@ src/
 ├── utils/Random.ts          seed normalization and randomization
 └── bench.ts                 benchmark, self-test suite, visual compare, capture
 
+examples/embed/              consumer installed with file:../..
 docs/                        rendering model, measurements, change report, plan
 bench.html                   benchmark, test and capture harness
 ```
 
-Parameters are the only thing the renderer consumes. The UI mutates them and
-the renderer reads them; the two never share DOM or GL state. Shaders are
-imported with Vite's `?raw` and assembled by `ShaderProgram`, so GLSL stays in
-`.glsl` files.
+Parameters remain the only thing the renderer consumes. The demo build and the
+library build share `src/`, but only `src/library/index.ts` is public: the demo,
+the benchmark and the example all go through it (the benchmark also constructs
+`Renderer` directly to measure a single frame). Shaders are imported with Vite's
+`?raw` and assembled by `ShaderProgram`, so GLSL stays in `.glsl` files and the
+library consumer needs no shader plugin.
 
 ## Performance
 
@@ -172,7 +241,7 @@ routes:
 ```text
 bench.html?w=1920&h=1080&preset=orion-deep   # draw-cost benchmark
 bench.html?mode=volume&w=1280&h=720           # volume benchmark
-bench.html?test=suite                         # 53 self-checks
+bench.html?test=suite                         # 96 self-checks
 bench.html?test=compare&ref=orion-deep-2d.png&preset=orion-deep&w=640&h=400
 bench.html?test=io                            # JSON round-trip + clamping
 bench.html?test=contextloss                   # forced context loss and restore

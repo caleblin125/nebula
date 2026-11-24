@@ -18,10 +18,12 @@ URLs in the documentation stay valid.
 
 ```bash
 npm run typecheck
-npm run build
+npm run build          # demo + library
+npm --prefix examples/embed install
+npm --prefix examples/embed run check
 ```
 
-Both must pass. If the change affects rendering, also check it in 2D and volume
+All must pass. If the change affects rendering, also check it in 2D and volume
 mode and across a few presets, since they exercise different density ranges and
 palettes.
 
@@ -31,16 +33,17 @@ The project has a dependency-free self-test suite and fixed-seed visual
 regressions. Run both from a dev server before opening a pull request:
 
 ```text
-bench.html?test=suite                         # 53 checks, all must pass
+bench.html?test=suite                         # 96 checks, all must pass
 bench.html?test=compare&ref=orion-deep-2d.png&preset=orion-deep&w=640&h=400
 bench.html?test=compare&ref=orion-deep-volume.png&mode=volume&steps=32&preset=orion-deep&w=640&h=400
 ```
 
 The suite covers normalization, import/export, presets, exact sRGB conversion,
-shader compilation and initialization, reproducibility, density bounds and the
-envelope, and context loss/restore. The comparison renders through the same
-`renderFrame` path as the captures and must match the lossless PNG in
-`screenshots/reference/` within the stated tolerance.
+the versioned library configuration, the camera model, shader compilation and
+initialization, the library lifecycle and events, multiple instances,
+reproducibility, density bounds and the envelope, and context loss/restore. The
+comparison renders through the same `renderFrame` path as the captures and must
+match the lossless PNG in `screenshots/reference/` within the stated tolerance.
 
 A shader that fails to compile makes the renderer fall back to 2D silently, so
 always confirm the mode in the harness output; the suite and comparison both

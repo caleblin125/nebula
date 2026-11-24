@@ -23,6 +23,12 @@ import {
   type PaletteId,
   type RenderMode,
 } from '../simulation/Parameters';
+import {
+  DEFAULT_CAMERA,
+  cloneCamera,
+  resolveCamera,
+  type CameraParameters,
+} from '../core/Camera';
 
 const INCLUDES: ShaderSources = {
   'noise.glsl': noiseSource,
@@ -51,6 +57,17 @@ export interface RendererCallbacks {
   onStats?: (stats: RendererStats) => void;
   onStatus?: (status: RendererStatus) => void;
   onError?: (message: string) => void;
+  /** Called after every drawn frame, with the shader-time clock. */
+  onRender?: (time: number) => void;
+}
+
+export interface RendererCapabilities {
+  webgl2: boolean;
+  volume: boolean;
+  bloom: boolean;
+  gpuTimer: boolean;
+  maxTextureSize: number;
+  renderer: string;
 }
 
 interface PaletteUniforms {
@@ -121,12 +138,14 @@ export class Renderer {
   private monitor: PerformanceMonitor;
 
   private parameters: NebulaParameters;
+  private camera: CameraParameters;
   private paletteCacheId: PaletteId | null = null;
   private paletteCache: PaletteUniforms | null = null;
 
   private time = 0;
   private lastTimestamp = 0;
   private rafId = 0;
+  private running = false;
   private disposed = false;
   private dirty = true;
   private contextLost = false;
@@ -151,9 +170,11 @@ export class Renderer {
     canvas: HTMLCanvasElement,
     parameters: NebulaParameters,
     callbacks: RendererCallbacks = {},
+    camera: CameraParameters = DEFAULT_CAMERA,
   ) {
     this.canvas = canvas;
     this.parameters = parameters;
+    this.camera = cloneCamera(camera);
     this.callbacks = callbacks;
 
     const gl = canvas.getContext('webgl2', {
@@ -192,7 +213,9 @@ export class Renderer {
     this.observeResize();
     this.resize();
 
-    this.rafId = requestAnimationFrame(this.frame);
+    // The render loop is opt-in: hosts either call `start()` or drive frames
+    // manually with `renderAt()`. A library embed that wants a still frame
+    // should not inherit an animation loop it never asked for.
   }
 
   // -------------------------------------------------------------------------
@@ -220,6 +243,62 @@ export class Renderer {
 
   getParameters(): NebulaParameters {
     return this.parameters;
+  }
+
+  setCamera(camera: CameraParameters): void {
+    this.camera = cloneCamera(camera);
+    this.dirty = true;
+  }
+
+  getCamera(): CameraParameters {
+    return cloneCamera(this.camera);
+  }
+
+  /** Set the shader-time clock used by the next frame. */
+  setTime(time: number): void {
+    this.time = Number.isFinite(time) ? Math.max(0, time) : 0;
+    this.dirty = true;
+  }
+
+  getTime(): number {
+    return this.time;
+  }
+
+  /**
+   * Start the internal animation loop (opt-in). Hosts that own their timing
+   * leave this off and call {@link renderAt} instead.
+   */
+  start(): void {
+    if (this.running || this.disposed) return;
+    this.running = true;
+    this.lastTimestamp = 0;
+    this.rafId = requestAnimationFrame(this.frame);
+  }
+
+  stop(): void {
+    if (!this.running) return;
+    this.running = false;
+    cancelAnimationFrame(this.rafId);
+    this.rafId = 0;
+  }
+
+  get isRunning(): boolean {
+    return this.running;
+  }
+
+  getCapabilities(): RendererCapabilities {
+    const debug = this.gl.getExtension('WEBGL_debug_renderer_info');
+    const name = debug
+      ? this.gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
+      : this.gl.getParameter(this.gl.RENDERER);
+    return {
+      webgl2: true,
+      volume: this.volumeAvailable,
+      bloom: this.post !== null,
+      gpuTimer: this.monitor.timer.available,
+      maxTextureSize: Number(this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) ?? 0),
+      renderer: String(name ?? 'unknown'),
+    };
   }
 
   getStats(): RendererStats {
@@ -256,6 +335,13 @@ export class Renderer {
     this.dirty = false;
     this.draw();
     this.monitor.markFrameRendered();
+    this.afterDraw(performance.now(), false);
+  }
+
+  /** Draw one frame for an explicit time, without running the internal loop. */
+  renderAt(time: number): void {
+    this.setTime(time);
+    this.renderOnce();
   }
 
   /** Development aid: 1 density, 2 cloud, 3 filaments, 4 shape, 5 mask. */
@@ -267,7 +353,7 @@ export class Renderer {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    cancelAnimationFrame(this.rafId);
+    this.stop();
     this.resizeObserver?.disconnect();
     this.canvas.removeEventListener('webglcontextlost', this.handleContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.handleContextRestored);
@@ -402,7 +488,7 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   private readonly frame = (now: number): void => {
-    if (this.disposed) return;
+    if (this.disposed || !this.running) return;
     this.rafId = requestAnimationFrame(this.frame);
     this.monitor.markFrameStart(now);
 
@@ -421,9 +507,14 @@ export class Renderer {
     this.dirty = false;
     this.draw();
     this.monitor.markFrameRendered();
-    this.maybeAdaptQuality();
-    this.maybeDispatchStats(now);
+    this.afterDraw(now, true);
   };
+
+  private afterDraw(now: number, adapt: boolean): void {
+    this.callbacks.onRender?.(this.time);
+    if (adapt) this.maybeAdaptQuality();
+    this.maybeDispatchStats(now);
+  }
 
   private activeMode(): RenderMode {
     return this.parameters.mode === 'volume' && this.volumeProgram ? 'volume' : '2d';
@@ -476,7 +567,6 @@ export class Renderer {
     u.float('uDetail', p.detail);
     u.float('uLacunarity', p.lacunarity);
     u.float('uPersistence', p.persistence);
-    u.float('uRotation', p.rotation);
     u.float('uAnimationSpeed', p.animationSpeed);
     u.float('uTime', this.time);
 
@@ -486,6 +576,12 @@ export class Renderer {
     u.float('uStarDensity', p.starDensity);
     if (this.activeMode() === 'volume') {
       u.int('uStepCount', Math.round(p.volumeSteps));
+      const view = resolveCamera(this.camera, this.time * p.animationSpeed, p.rotation);
+      u.vec3v('uCameraPos', view.position);
+      u.vec3v('uCameraTarget', view.target);
+      u.float('uCameraFov', view.fov);
+    } else {
+      u.float('uRotation', p.rotation);
     }
     u.int('uDebugView', this.debugView);
 

@@ -24,12 +24,31 @@
     "url": "https://github.com/caleblin125/nebula/issues"
   },
   "type": "module",
+  "main": "./dist-lib/nebula.cjs",
+  "module": "./dist-lib/nebula.js",
+  "types": "./dist-lib/types/library/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist-lib/types/library/index.d.ts",
+      "import": "./dist-lib/nebula.js",
+      "require": "./dist-lib/nebula.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist-lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run build:demo && npm run build:lib",
+    "build:demo": "tsc --noEmit && vite build",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "bench": "vite --open /bench.html"
